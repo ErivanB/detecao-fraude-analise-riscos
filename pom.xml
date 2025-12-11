@@ -38,9 +38,6 @@
 
 		<!-- FalkorDB Driver -->
 		<dependency>
-			<groupId>com.redislabs</groupId>
-			<artifactId>jredisgraph</artifactId>
-			<version>2.6.0</version>
 		</dependency>
 
 		<!-- Utilidades -->
