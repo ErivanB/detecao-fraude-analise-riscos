@@ -1,0 +1,24 @@
+1.Visão Geral (Amostra do Caos)
+GRAPH.QUERY anti_fraude "MATCH p=(u:Usuario)-[:POSSUI_CONTA]->(c:Conta)-[:TRANSFERIU]->(dest:Conta) RETURN p LIMIT 20"
+
+2.Grafo de Dispositivos (Quem usa qual aparelho) 📱
+GRAPH.QUERY anti_fraude "MATCH p=(u:Usuario)-[:USA_DEVICE]->(d:Device) RETURN p LIMIT 1000"
+
+3. Grafo de Transferências (O Fluxo do Dinheiro) 💸
+GRAPH.QUERY anti_fraude "MATCH p=(c1:Conta)-[:TRANSFERIU]->(c2:Conta) RETURN p LIMIT 1000"
+
+4.Filtrar usuarios que Apontando parao Chefe do "Device Farm"
+GRAPH.QUERY anti_fraude "MATCH p=(u:Usuario)-[:USA_DEVICE]->(d:Device {id: 'IPHONE_DO_CRIME_01'}) RETURN p"
+
+5.Visualizando a Lavagem de Dinheiro (O Triângulo)
+GRAPH.QUERY anti_fraude "MATCH p=(c1:Conta)-[:TRANSFERIU]->(c2:Conta)-[:TRANSFERIU]->(c3:Conta)-[:TRANSFERIU]->(c1) WHERE c1 <> c2 AND c2 <> c3 RETURN p"
+
+6. O Grafo "Laranjas e Chefe" (Formato de Funil/Ponte)
+GRAPH.QUERY anti_fraude "MATCH p1=(u:Usuario)-[:USA_DEVICE]->(d:Device {id: 'SAMSUNG_DO_CHEFE'}) MATCH p2=(u)-[:POSSUI_CONTA]->(c:Conta)-[:TRANSFERIU]->(laranja:Conta) RETURN p1, p2"
+
+7. Visualizando a Fraude Híbrida (O Chefe e os Laranjas)
+Esta query cruza duas informações: conexões no celular do chefe (p1) E transferências para laranjas (p2).
+GRAPH.QUERY anti_fraude "MATCH p1=(u:Usuario)-[:USA_DEVICE]->(d:Device {id: 'SAMSUNG_DO_CHEFE'}) MATCH p2=(u)-[:POSSUI_CONTA]->(c:Conta)-[:TRANSFERIU]->(laranja:Conta) RETURN p1, p2"
+
+8.Grafo dos Bloqueados (A Lista Negra) 🚫
+GRAPH.QUERY anti_fraude "MATCH (n) WHERE n.status = 'BLOQUEADO' OR n.status = 'BLOCKED' RETURN n"

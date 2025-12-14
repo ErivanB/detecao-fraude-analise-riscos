@@ -2,40 +2,36 @@ from falkordb import FalkorDB
 from faker import Faker
 import random
 import time
-from tqdm import tqdm # Barra de progresso (pip install tqdm)
+from tqdm import tqdm
 
 # CONFIGURAÇÕES
 TOTAL_USUARIOS = 2000
-TOTAL_TRANSACOES_NORMAIS = 10000
-BATCH_SIZE = 500 # Tamanho do lote de inserção
+TOTAL_TRANSACOES_NORMAIS = 5000
+BATCH_SIZE = 500
 
 db = FalkorDB(host='localhost', port=6379)
 graph = db.select_graph('anti_fraude')
 fake = Faker('pt_BR')
 
 def batch_execute(query, data_list, desc):
-    """Função auxiliar para inserir dados em lotes (Massive Insert)"""
     if not data_list: return
-    
     total = len(data_list)
     with tqdm(total=total, desc=desc) as pbar:
         for i in range(0, total, BATCH_SIZE):
             batch = data_list[i : i + BATCH_SIZE]
-            # UNWIND desenrola a lista dentro do banco (muito rápido)
             graph.query(query, {'batch': batch})
             pbar.update(len(batch))
 
-print("🔥 -- INICIANDO GERAÇÃO DE DADOS MASSIVOS -- 🔥")
+print("🔥 -- GERANDO DADOS HÍBRIDOS (DEVICE + DINHEIRO) -- 🔥")
 
 # 1. LIMPEZA
-print("🧹 Limpando grafo antigo...")
 graph.query("MATCH (n) DETACH DELETE n")
 
-# 2. GERAR USUÁRIOS E CONTAS (Nós Base)
+# 2. GERAR USUÁRIOS E CONTAS
 users_data = []
-account_ids = [] # Para referência rápida
+account_ids = []
 
-print(f"👥 Gerando {TOTAL_USUARIOS} usuários na memória...")
+print(f"👥 Gerando {TOTAL_USUARIOS} usuários...")
 for i in range(TOTAL_USUARIOS):
     uid = f"U{i:05d}"
     acc_id = f"ACC{i:05d}"
@@ -43,11 +39,10 @@ for i in range(TOTAL_USUARIOS):
         'uid': uid,
         'nome': fake.name(),
         'acc_id': acc_id,
-        'device_id': fake.uuid4() # A maioria tem device único
+        'device_id': fake.uuid4()
     })
     account_ids.append(acc_id)
 
-# Query de inserção de nós
 q_nodes = """
 UNWIND $batch as row
 MERGE (u:Usuario {id: row.uid, nome: row.nome})
@@ -56,10 +51,9 @@ MERGE (d:Device {id: row.device_id})
 MERGE (u)-[:POSSUI_CONTA]->(c)
 MERGE (u)-[:USA_DEVICE]->(d)
 """
-batch_execute(q_nodes, users_data, "Inserindo Usuários/Contas")
+batch_execute(q_nodes, users_data, "Criando Nós")
 
-# 3. GERAR TRANSAÇÕES LEGAIS (Ruído)
-print("💸 Gerando transações legítimas aleatórias...")
+# 3. TRANSAÇÕES NORMAIS (RUÍDO)
 transacoes_normais = []
 t_base = int(time.time()) - 100000
 
@@ -67,72 +61,65 @@ for _ in range(TOTAL_TRANSACOES_NORMAIS):
     origem = random.choice(account_ids)
     destino = random.choice(account_ids)
     if origem == destino: continue
-    
     transacoes_normais.append({
-        'from': origem,
-        'to': destino,
-        'val': round(random.uniform(10, 5000), 2),
+        'from': origem, 'to': destino,
+        'val': round(random.uniform(10, 500), 2),
         'ts': t_base + random.randint(1, 100000)
     })
 
 q_trans = """
 UNWIND $batch as row
-MATCH (a:Conta {id: row.from}), (b:Conta {id: row.to})
-CREATE (a)-[:TRANSFERIU {valor: row.val, ts: row.ts, tipo: 'normal'}]->(b)
+MATCH (c1:Conta {id: row.from}), (c2:Conta {id: row.to})
+CREATE (c1)-[:TRANSFERIU {valor: row.val, ts: row.ts}]->(c2)
 """
-batch_execute(q_trans, transacoes_normais, "Inserindo Transações Normais")
+batch_execute(q_trans, transacoes_normais, "Transações Normais")
 
-# --- AQUI COMEÇAM AS FRAUDES ESPECÍFICAS ---
+# --- FRAUDES ---
 
 print("\n🚨 INJETANDO CENÁRIOS DE FRAUDE...")
 
-# CENÁRIO A: DEVICE FARM (1 Device <- 50 Usuários)
-# Escolhemos um ID fixo e fazemos 50 usuários aleatórios usarem ele
+# A: DEVICE FARM SIMPLES
 fraud_device = "IPHONE_DO_CRIME_01"
-farm_users = random.sample(users_data, 50) # Pega 50 users já existentes
+farm_users = users_data[:50] # Primeiros 50 users
 farm_data = [{'uid': u['uid'], 'did': fraud_device} for u in farm_users]
+q_farm = "UNWIND $batch as row MATCH (u:Usuario {id: row.uid}) MERGE (d:Device {id: row.did}) MERGE (u)-[:USA_DEVICE]->(d)"
+batch_execute(q_farm, farm_data, "A: Device Farm")
 
-q_farm = """
-UNWIND $batch as row
-MATCH (u:Usuario {id: row.uid})
-MERGE (d:Device {id: row.did})
-MERGE (u)-[:USA_DEVICE {risco: 'alto'}]->(d)
-"""
-batch_execute(q_farm, farm_data, "Criando Device Farm")
-
-# CENÁRIO B: LAVAGEM EM ANEL (Ciclo Fechado)
-# Cria 3 anéis diferentes de 5 pessoas
+# B: ANEL DE LAVAGEM (A->B->C->A)
+accs = account_ids[-10:] # Últimas 10 contas
 q_cycle = """
-MATCH (c1:Conta {id: $id1}), (c2:Conta {id: $id2}), (c3:Conta {id: $id3}), (c4:Conta {id: $id4}), (c5:Conta {id: $id5})
-CREATE (c1)-[:TRANSFERIU {valor: 50000, ts: $t}]->(c2)
-CREATE (c2)-[:TRANSFERIU {valor: 49000, ts: $t+100}]->(c3)
-CREATE (c3)-[:TRANSFERIU {valor: 48000, ts: $t+200}]->(c4)
-CREATE (c4)-[:TRANSFERIU {valor: 47000, ts: $t+300}]->(c5)
-CREATE (c5)-[:TRANSFERIU {valor: 46000, ts: $t+400}]->(c1)
+MATCH (c1:Conta {id: $id1}), (c2:Conta {id: $id2}), (c3:Conta {id: $id3})
+CREATE (c1)-[:TRANSFERIU {valor: 50000, tipo: 'lavagem'}]->(c2)
+CREATE (c2)-[:TRANSFERIU {valor: 49500, tipo: 'lavagem'}]->(c3)
+CREATE (c3)-[:TRANSFERIU {valor: 49000, tipo: 'lavagem'}]->(c1)
 """
-# Pegamos contas do fim da lista para não misturar muito
-cycle_accs = account_ids[-20:] 
-params = {
-    'id1': cycle_accs[0], 'id2': cycle_accs[1], 'id3': cycle_accs[2], 
-    'id4': cycle_accs[3], 'id5': cycle_accs[4], 't': int(time.time())
-}
-graph.query(q_cycle, params)
-print("-> Ciclo de lavagem injetado (Contas finais da lista)")
+graph.query(q_cycle, {'id1': accs[0], 'id2': accs[1], 'id3': accs[2]})
+print("-> B: Ciclo de Lavagem Injetado")
 
-# CENÁRIO C: SMURFING (Fan-Out -> Fan-In)
-# A Conta X manda para 20 Mulas, que mandam para a Conta Y
-mestre_origem = account_ids[10]
-mestre_destino = account_ids[11]
-mulas = account_ids[100:120] # 20 mulas
+# C: FRAUDE HÍBRIDA (O SANTO GRAAL) 🏆
+# Cenário: 15 usuários usam o MESMO celular E mandam dinheiro para a MESMA conta laranja.
+# Isso prova que o dono do celular controla todas as contas.
 
-smurf_data = []
-ts = int(time.time())
-for mula in mulas:
-    # Passo 1: Mestre -> Mula
-    smurf_data.append({'from': mestre_origem, 'to': mula, 'val': 1000, 'ts': ts})
-    # Passo 2: Mula -> Destino Final
-    smurf_data.append({'from': mula, 'to': mestre_destino, 'val': 950, 'ts': ts + 60})
+device_hibrido = "SAMSUNG_DO_CHEFE"
+conta_laranja = account_ids[100] # Uma conta alvo qualquer
+grupo_criminoso = users_data[100:115] # 15 usuários do meio da lista
 
-batch_execute(q_trans, smurf_data, "Criando Smurfing")
+hibrido_data = []
+transacoes_hibridas = []
 
-print("\n✅ CONCLUÍDO! Banco populado com sucesso.")
+for u in grupo_criminoso:
+    # 1. Todos usam o mesmo device
+    hibrido_data.append({'uid': u['uid'], 'did': device_hibrido})
+    # 2. Todos mandam dinheiro para o Laranja
+    transacoes_hibridas.append({
+        'from': u['acc_id'],
+        'to': conta_laranja,
+        'val': 9999.00
+    })
+
+# Executa conexões de device
+batch_execute(q_farm, hibrido_data, "C: Device do Chefe")
+# Executa transferências financeiras
+batch_execute(q_trans, transacoes_hibridas, "C: Pagamentos ao Laranja")
+
+print("\n✅ BANCO POPULADO! AGORA RODE O JAVA.")
