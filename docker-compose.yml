@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb-fraude
+    ports:
+      - "6379:6379"
+    environment:
+      - FALKORDB_PASSWORD=SenhaForte123
+    volumes:
+      - falkordb-data:/data
+    networks:
+      - fraude-network
+
+  app:
+    build: .
+    container_name: app-fraude
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_FALKORDB_HOST=falkordb
+      - SPRING_FALKORDB_PORT=6379
+      - SPRING_FALKORDB_PASSWORD=SenhaForte123
+    depends_on:
+      - falkordb
+    networks:
+      - fraude-network
+    restart: unless-stopped
+
+volumes:
+  falkordb-data:
+
+networks:
+  fraude-network:
+    driver: bridge
